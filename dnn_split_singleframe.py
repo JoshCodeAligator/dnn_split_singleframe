@@ -6,7 +6,6 @@ from pulp import LpProblem, LpMaximize, LpVariable, LpStatus, lpSum, LpBinary, P
 ###INPUTS
 #SCALARS
 Fv = 1e9        # 1 GFLOPS (realistic onboard compute for an edge vehicle or embedded system)
-FRm = [1e9]     # 1 GFLOPS for RSU 
 BR = 100e6      # 100 Mbps uplink bandwidth (typical for 4G LTE/5G shared uplink capacity)
 Dmax = 0.04     # 40 ms max delay (standard for real-time safety or perception tasks)
 Pt_v = 0.2      # 200 mW transmit power (realistic for V2X communication)
@@ -14,18 +13,6 @@ G = 1.0         # Unit gain (omnidirectional antenna)
 η = 2.0         # Path loss exponent (urban line-of-sight range)
 σ2 = 1e-9       # Thermal noise power (−90 dBm ≈ 1e-9 W at room temperature)
 
-# Total compute cost for vehicle-side (GFLOPs). 
-vehicle_compute_load = [0, 18, 33.55, 54.6172, 67.2072, 89.6351, 119.2351]  # size [7] - DNN has 7 layers (N=7)
-
-# Total compute cost for RSU-side (GFLOPs)
-rsu_compute_load = [119.2351, 101.2351, 85.6851, 64.6179, 52.0279, 29.6, 0]  # size [7]
-
-#Zone-Specific Values
-Sm_k = [[0.5 * 8e6, 0.8 * 8e6, 0.6 * 8e6]]  # bits per vehicle. 0.5–0.8 MB common for intermediate features
-d_mk = [[30, 40, 50]]                       # meters. RSUs in urban corridors often spaced ~50m
-
-#THE ONLY DYNAMIC INPUT (TESTING)
-Mm_k = [[3, 5, 4]]  # 1 RSU with 3 zones
 
 #OUTPUTS 
 '''
@@ -34,148 +21,146 @@ nm_k[M][K] - ideal combination of DNN partition points for all zones in RSU. (Fo
 '''
 
 ###3-STEP ALGORITHM PIPELINE
-#Step 1 - DNN Split Function that returns valid DNN splits per zone.
-valid_nm_k_2D = []
+def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load, Dmax):
+    #Step 1 - DNN Split Function that returns valid DNN splits per zone.
+    valid_nm_k = []
 
-def n_filter(Mm_k):
-    result = []  # one entry per zone
+    def n_filter(Mm_k):
+        results = []
+        for m in range(len(Mm_k)):
+            rsu_results = []  
+            for zone, vehicle_count in enumerate(Mm_k[m]):
+                candidates = []
 
-    for zone, vehicle_count in enumerate(Mm_k[0]):  # M=1 RSU assumed
-        candidates = []
+                #Computing Alpha and Beta and Checking if it is within System Constraints
+                for n in range(0, 7):
+                    A = vehicle_compute_load[n] / Fv
+                    B = (vehicle_count * rsu_compute_load[n]) / FRm[m]
+                    d = d_mk[m][zone]
+                    Sm = Sm_k[m][zone]
+                    snr = (Pt_v * G * d ** (-η)) / σ2
+                    uplink_throughput = BR * math.log2(1 + snr)
+                    C = (vehicle_count * Sm) / uplink_throughput
+                    E = Dmax - A
+                    if E <= 0:
+                        continue
+                    sqrt_BC = math.sqrt(B * C)
+                    alpha = (B + sqrt_BC) / E
+                    beta = (C + sqrt_BC) / E
+                    if 0 < alpha <= 1 and 0 < beta <= 1:
+                        total_delay = A + (B / alpha) + (C / beta)
+                        if total_delay <= Dmax:
+                            candidates.append({
+                                "rsu": m,
+                                "zone": zone,
+                                "dnn_split": n + 1,
+                                "value": vehicle_count,
+                                "weight": max(min(alpha, beta), alpha + beta - 1),
+                                "alpha": alpha,
+                                "beta": beta
+                            })
+                rsu_results.append(candidates)
+            results.append(rsu_results)
+        return results
 
-        #Computing Alpha and Beta and Checking if it is within System Constraints
-        for n in range(0, 7):  # DNN split options
+    #Step 2 - Group Knapsack Problem - Discrete Optimization + Convex Optimization. 
+    #Selects the best combination of dnn partition points across all zones.
+    def group_knapsack(zone_candidates):
+        prob = LpProblem("GroupKnapsack", LpMaximize)
+        variables = []
+
+        # Create binary decision variables
+        for group_idx, group in enumerate(zone_candidates):
+            for item_idx, item in enumerate(group):
+                var = LpVariable(f"x_{group_idx}_{item_idx}", cat=LpBinary)
+                variables.append((group_idx, item_idx, item, var))
+
+        # Objective: Maximize ∑ value × weight
+        prob += lpSum(item['value'] * item['weight'] * var for _, _, item, var in variables)
+
+        # Constraint: Select exactly one item per group
+        for group_idx in range(len(zone_candidates)):
+            prob += lpSum(var for g_i, _, _, var in variables if g_i == group_idx) == 1
+
+        # Constraint: Total α and β usage within limits
+        prob += lpSum(item['alpha'] * var for _, _, item, var in variables) <= 1
+        prob += lpSum(item['beta'] * var for _, _, item, var in variables) <= 1
+
+        # Solve the problem
+        prob.solve(PULP_CBC_CMD(msg=0))
+
+        if LpStatus[prob.status] != "Optimal":
+            print(f"Warning: Problem not solved optimally. Could not include all zones. Status = {LpStatus[prob.status]}\n")
+
+        # Extract the selected items
+        selected_items = [
+            {"rsu": item["rsu"], "zone": item["zone"], "dnn_split": item["dnn_split"], "value": item["value"]}
+            for _, _, item, var in variables if var.varValue == 1
+        ]
+
+        return selected_items
+
+    #Step 3 - Optimizing and Finalizing Alpha and Beta values. 
+    # The Lagrangian Method will be used on the selected set of dnn splits from Step 2.
+    def optimal_alpha_beta(best_selection):
+        finalized = []
+        
+        for entry in best_selection:
+            m = entry['rsu']
+            k = entry['zone']
+            n = entry['dnn_split'] - 1  
+            value = entry['value']
+
+            #Closed-Form Lagrangian Method Calculations
             A = vehicle_compute_load[n] / Fv
-            B = (vehicle_count * rsu_compute_load[n]) / FRm[0]
-
-            d = d_mk[0][zone]
-            Sm = Sm_k[0][zone]
+            B = (value * rsu_compute_load[n]) / FRm[m]
+            d = d_mk[m][k]
+            Sm = Sm_k[m][k]
             snr = (Pt_v * G * d ** (-η)) / σ2
             uplink_throughput = BR * math.log2(1 + snr)
-            C = (vehicle_count * Sm) / uplink_throughput
-
+            C = (value * Sm) / uplink_throughput
             E = Dmax - A
+
             if E <= 0:
                 continue
-         
-            sqrt_BC = math.sqrt(B * C)
-            alpha = (B + sqrt_BC) / E
-            beta = (C + sqrt_BC) / E
 
-            if 0 < alpha <= 1 and 0 < beta <= 1:
-                total_delay = A + (B / alpha) + (C / beta)
-                if total_delay <= Dmax:
-                    weight = max(min(alpha, beta), alpha + beta - 1)
-                    candidates.append({
-                        "zone": zone,
-                        "dnn_split": n + 1,
-                        "value": vehicle_count,
-                        "weight": weight,
-                        "avg_weight": vehicle_count * weight,
-                        "alpha": alpha,
-                        "beta": beta
-                    })
-        result.append(candidates)
+            #Re-computed alpha and beta values
+            optimal_alpha = (B + math.sqrt(B * C)) / E
+            optimal_beta = (C + math.sqrt(B * C)) / E
 
-    return result
+            finalized.append({
+                "RSU": m,
+                "zone": k + 1,
+                "n": n + 1,
+                "value": value,
+                "alpha*": optimal_alpha,
+                "beta*": optimal_beta,
+                "total_delay": A + (B / optimal_alpha) + (C / optimal_beta)
+            })
+        return finalized
 
-#Step 2 - Group Knapsack Problem - Discrete Optimization + Convex Optimization. 
-#Selects the best combination of dnn partition points across all zones.
-def group_knapsack(zone_candidates):
-    prob = LpProblem("GroupKnapsack", LpMaximize)
-    variables = []
+    #Testing Output
+    ###n_filter algorithm - Step 1
+    valid_nm_k = n_filter(Mm_k)
+    dnn_results = []
+    ###group knapsack for discrete optimization - Step 2
+    #RSU can NOT offload vehicle workload
+    for zone_candidates in valid_nm_k:
+        best_selection = group_knapsack(zone_candidates)
+        if not best_selection:
+            print("No valid selection found.")
 
-    # Create binary decision variables
-    for group_idx, group in enumerate(zone_candidates):
-        for item_idx, item in enumerate(group):
-            var = LpVariable(f"x_{group_idx}_{item_idx}", cat=LpBinary)
-            variables.append((group_idx, item_idx, item, var))
+        #RSU can offload vehicle workload
+        else:
+            ###finalized alpha* and beta* - Step 3
+            final_output = optimal_alpha_beta(best_selection)
+            
+            # Tabulates Values in a Pandas Dataframe according to Zone Order
+            df_output = pd.DataFrame(final_output).sort_values(["RSU", "zone"]) 
+            
+            #Removing RSU column due to redundancy
+            df_output = df_output.drop(columns=["RSU"])
+            dnn_results.append(df_output)
 
-    # Objective: Maximize ∑ value × weight
-    prob += lpSum(item['value'] * item['weight'] * var for _, _, item, var in variables)
-
-    # Constraint: Select exactly one item per group
-    for group_idx in range(len(zone_candidates)):
-        prob += lpSum(var for g_i, _, _, var in variables if g_i == group_idx) == 1
-
-    # Constraint: Total α and β usage within limits
-    prob += lpSum(item['alpha'] * var for _, _, item, var in variables) <= 1
-    prob += lpSum(item['beta'] * var for _, _, item, var in variables) <= 1
-
-    # Solve the problem
-    prob.solve(PULP_CBC_CMD(msg=0))
-
-    if LpStatus[prob.status] != "Optimal":
-        print(f"Warning: Problem not solved optimally. Could not include all zones. Status = {LpStatus[prob.status]}\n")
-
-    # Extract the selected items
-    selected_items = selected_items = [
-        {"zone": item["zone"], "dnn_split": item["dnn_split"], "value": item["value"]}
-        for _, _, item, var in variables if var.varValue == 1
-    ]
-
-    return selected_items
-
-#Step 3 - Optimizing and Finalizing Alpha and Beta values. 
-# The Lagrangian Method will be used on the selected set of dnn splits from Step 2.
-def optimal_alpha_beta(best_selection):
-    finalized = []
-    
-    for entry in best_selection:
-        k = entry['zone']
-        n = entry['dnn_split'] - 1  
-        value = entry['value']
-
-        #Closed-Form Lagrangian Method Calculations
-        A = vehicle_compute_load[n] / Fv
-        B = (value * rsu_compute_load[n]) / FRm[0]
-        d = d_mk[0][k]
-        Sm = Sm_k[0][k]
-        snr = (Pt_v * G * d ** (-η)) / σ2
-        uplink_throughput = BR * math.log2(1 + snr)
-        C = (value * Sm) / uplink_throughput
-        E = Dmax - A
-
-        if E <= 0:
-            continue
-
-        #Re-computed alpha and beta values
-        optimal_alpha = (B + math.sqrt(B * C)) / E
-        optimal_beta = (C + math.sqrt(B * C)) / E
-
-        finalized.append({
-            "zone": k,
-            "n": n + 1,
-            "value": value,
-            "alpha*": optimal_alpha,
-            "beta*": optimal_beta,
-            "total_delay": A + (B / optimal_alpha) + (C / optimal_beta)
-        })
-
-    return finalized
-
-#Testing Output
-###n_filter algorithm - Step 1
-valid_nm_k_2D= n_filter(Mm_k)
-
-
-###group knapsack for discrete optimization - Step 2
-#RSU can NOT offload vehicle workload
-best_selection = group_knapsack(valid_nm_k_2D)
-if not best_selection:
-    print("No valid selection found.")
-
-#RSU can offload vehicle workload
-else:
-    #Calculates Total Vehicle Count
-    total_vehicles = sum(item["value"] for item in best_selection)
-
-    ###finalized alpha* and beta* - Step 3
-    final_output = optimal_alpha_beta(best_selection)
-    
-    # Tabulates Values in a Pandas Dataframe according to Zone Order
-    df_output = pd.DataFrame(final_output).sort_values("zone")   
-    print(f"Total Vehicle Count: {total_vehicles}\n")
-    print(df_output)
-
+    return dnn_results
 
