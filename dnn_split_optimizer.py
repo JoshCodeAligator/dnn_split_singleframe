@@ -4,27 +4,37 @@ import pandas as pd
 # INPUTS
 def get_inputs():
     return {
-        "Fv": 5e9,
-        "BR": 100e6,
-        "Dmax": 0.2,
-        "Pt_v": 0.5,
-        "G": 1.0,
-        "η": 2.0,
-        "σ2": 1e-9,
-        "FRm": [10e9, 10e9],
-        "vehicle_compute_load": [0, 0.1e9, 0.2e9, 0.3e9, 0.4e9, 0.5e9, 0.6e9],
-        "rsu_compute_load":     [0.6e9, 0.5e9, 0.4e9, 0.3e9, 0.2e9, 0.1e9, 0],
+        # SCALARS
+        "Fv": 200e9,     # 200 GFLOPS (higher onboard compute to reduce vehicle delay A)
+        "BR": 1e9,       # 1 Gbps uplink bandwidth (reduces upload time C)
+        "Dmax": 0.8,     # 800 ms max delay (relaxed deadline for feasibility margin)
+        "Pt_v": 0.5,     # 500 mW transmit power 
+        "G": 1.0,        # Unit gain (omnidirectional antenna)
+        "η": 2.0,        # Path loss exponent (urban line-of-sight range)
+        "σ2": 1e-9,      # Thermal noise power (−90 dBm ≈ 1e-9 W at room temperature)
+
+        "FRm": [400e9, 400e9],  # 400 GFLOPS per RSU 
+
+        # Real-World Compute Loads for Vehicle and RSU
+        "vehicle_compute_load": [0, 18e9, 33.55e9, 54.6172e9, 67.2072e9, 89.6351e9, 119.2351e9],
+        "rsu_compute_load":     [119.2351e9, 101.2351e9, 85.6851e9, 64.6179e9, 52.0279e9, 29.6e9, 0],
+
+        # Feature Sizes (Sm_k):
         "Sm_k": [
-            [0.1 * 8e5, 0.1 * 8e5, 0.1 * 8e5],
-            [0.1 * 8e5, 0.1 * 8e5]
+            [0.09 * 8e5, 0.09 * 8e5, 0.09 * 8e5],  # RSU 1
+            [0.09 * 8e5, 0.09 * 8e5]               # RSU 2
         ],
+
+        # Distances (d_mk): The closer the distance, the better the SNR and throughput (C)
         "d_mk": [
-            [10, 15, 20],
-            [10, 15]
+            [5, 6, 6],   # RSU 1
+            [6, 5]       # RSU 2
         ],
+
+        # vehicles counts per zone for each RSU (Mm_k)
         "Mm_k": [
-            [1, 2, 1],
-            [2, 1]
+            [1, 2, 1],   # RSU 1
+            [2, 1]       # RSU 2
         ]
     }
 # OUTPUTS
