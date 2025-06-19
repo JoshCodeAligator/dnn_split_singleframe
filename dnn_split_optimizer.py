@@ -1,40 +1,70 @@
 from dnn_split_singleframe import dnn_partition
+import pandas as pd
 
-#INPUTS USED IN DNN PARTITION ALGORITHM
-FRm = [1e9, 1.5e9]    # 1 GFLOPS for RSU 
-vehicle_compute_load = [0, 18, 33.55, 54.6172, 67.2072, 89.6351, 119.2351]  # Total compute cost for vehicle-side (GFLOPs). size [7] - DNN has 7 layers (N=7)
-rsu_compute_load = [119.2351, 101.2351, 85.6851, 64.6179, 52.0279, 29.6, 0] # Total compute cost for RSU-side (GFLOPs). size [7]
-Sm_k = [
-    [0.5 * 8e6, 0.8 * 8e6, 0.6 * 8e6],  # RSU 1: 3 zones (bits/vehicle)
-    [0.7 * 8e6, 0.5 * 8e6]              # RSU 2: 2 zones 
-]
-d_mk = [
-    [30, 40, 50],                       # RSU 1: distances to zones (m)
-    [60, 45]                            # RSU 2: distances to zones (m)
-]                                       
+# INPUTS
+def get_inputs():
+    return {
+        "Fv": 5e9,
+        "BR": 100e6,
+        "Dmax": 0.2,
+        "Pt_v": 0.5,
+        "G": 1.0,
+        "η": 2.0,
+        "σ2": 1e-9,
+        "FRm": [10e9, 10e9],
+        "vehicle_compute_load": [0, 0.1e9, 0.2e9, 0.3e9, 0.4e9, 0.5e9, 0.6e9],
+        "rsu_compute_load":     [0.6e9, 0.5e9, 0.4e9, 0.3e9, 0.2e9, 0.1e9, 0],
+        "Sm_k": [
+            [0.1 * 8e5, 0.1 * 8e5, 0.1 * 8e5],
+            [0.1 * 8e5, 0.1 * 8e5]
+        ],
+        "d_mk": [
+            [10, 15, 20],
+            [10, 15]
+        ],
+        "Mm_k": [
+            [1, 2, 1],
+            [2, 1]
+        ]
+    }
+# OUTPUTS
+# ----------
+# For each RSU and its zones:
+# • nm_k[M][K]: Optimal DNN partition index (n) selected per zone from the candidate splits.
+# • αm_k[M][K], βm_k[M][K]: Fraction of RSU compute (alpha) and bandwidth (beta) allocated per zone.
+# 
+# Returned as a list of Pandas DataFrames — one per RSU — where each row corresponds to a zone with:
+#     - zone       → zone index (1-based)
+#     - n          → selected DNN split index
+#     - value      → number of vehicles in the zone
+#     - alpha*     → optimal α computed using Lagrangian method
+#     - beta*      → optimal β computed using Lagrangian method
+#     - total_delay → total delay for the zone's offloading computation
 
-Mm_k = [
-    [3, 5, 4],                          # RSU 1: 3 vehicles in zone 1, 5 in zone 2, 4 in zone 3
-    [6, 2]                              # RSU 2: 6 vehicles in zone 1, 2 in zone 2
-]
 
-# Runs DNN Algorithm Per RSU for every time slot
-def dnn_per_slot(time_slot=0.2, iterations=3):
+# DNN Optimization Runner. Executes the DNN Partition function for a set number of iterations
+def dnn_per_slot(inputs: dict, iterations=3, save_csv=False):
+    time_slot = inputs["Dmax"]
+    
     for t in range(iterations):
         current_time = round(t * time_slot, 3)
         print(f"\n===== Time Slot {t + 1} | Time: {current_time:.3f}s =====")
-        results = dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load, Dmax=time_slot)
+
+        results = dnn_partition(
+            inputs["Mm_k"], inputs["Sm_k"], inputs["d_mk"], inputs["FRm"],
+            inputs["vehicle_compute_load"], inputs["rsu_compute_load"], inputs["Dmax"],
+            inputs["Fv"], inputs["BR"], inputs["Pt_v"], inputs["G"], inputs["η"], inputs["σ2"]
+        )
 
         for idx, df in enumerate(results, start=1):
             print(f"\n--- RSU {idx} ---")
             print(f"Total Vehicles: {df['value'].sum()}")
+            print(df.to_string(index=False))
 
-            #Removes Row Indices for Cleaner Output
-            print(df.to_string(index=False)
-)
+            if save_csv:
+                df.to_csv(f"rsu_{idx}_slot_{t+1}.csv", index=False)
 
-#Displays a Pandas Dataframe 
-#Outputs Optimal Values of nm_k_t, a*m_k_t, and b*m_k_t across all zones per RSU for each time slot iteration
-dnn_per_slot()
-
-
+# main function that runs DNN partition
+if __name__ == "__main__":
+    inputs = get_inputs()
+    dnn_per_slot(inputs, iterations=3, save_csv=False)

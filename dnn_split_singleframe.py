@@ -3,25 +3,9 @@ import itertools
 import pandas as pd
 from pulp import LpProblem, LpMaximize, LpVariable, LpStatus, lpSum, LpBinary, PULP_CBC_CMD
 
-###INPUTS
-#SCALARS
-Fv = 1e9        # 1 GFLOPS (realistic onboard compute for an edge vehicle or embedded system)
-BR = 100e6      # 100 Mbps uplink bandwidth (typical for 4G LTE/5G shared uplink capacity)
-Dmax = 0.04     # 40 ms max delay (standard for real-time safety or perception tasks)
-Pt_v = 0.2      # 200 mW transmit power (realistic for V2X communication)
-G = 1.0         # Unit gain (omnidirectional antenna)
-η = 2.0         # Path loss exponent (urban line-of-sight range)
-σ2 = 1e-9       # Thermal noise power (−90 dBm ≈ 1e-9 W at room temperature)
-
-
-#OUTPUTS 
-'''
-nm_k[M][K] - ideal combination of DNN partition points for all zones in RSU. (Found in Step 2)
-αm_k[M][K], βm_k[M][K] - fraction of RSU compute power and bandwidth allocated per zone. (Found in Step 3)
-'''
-
 ###3-STEP ALGORITHM PIPELINE
-def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load, Dmax):
+def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load, Dmax,
+                  Fv, BR, Pt_v, G, η, σ2):
     #Step 1 - DNN Split Function that returns valid DNN splits per zone.
     valid_nm_k = []
 
@@ -143,6 +127,7 @@ def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load,
     ###n_filter algorithm - Step 1
     valid_nm_k = n_filter(Mm_k)
     dnn_results = []
+    
     ###group knapsack for discrete optimization - Step 2
     #RSU can NOT offload vehicle workload
     for zone_candidates in valid_nm_k:
