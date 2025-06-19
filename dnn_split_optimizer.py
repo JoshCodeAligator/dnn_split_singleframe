@@ -52,14 +52,39 @@ def get_inputs():
 #     - total_delay → total delay for the zone's offloading computation
 
 
+# Vehicle Mobility helper function – applies mobility to update vehicle counts per zone in each RSU.
+def apply_vm(Mm_k, mobility_ratio=0.2):
+    """
+    Updates vehicle counts due to zone-to-zone and RSU-to-RSU mobility
+    """
+    M_updated = [zone_counts[:] for zone_counts in Mm_k]  
+    
+    for m in range(len(Mm_k)):
+        for k in range(len(Mm_k[m])):
+            moved_out = int(Mm_k[m][k] * mobility_ratio)
+            M_updated[m][k] -= moved_out
+
+            # Vehicles move to next zone or previous RSU
+            if k + 1 < len(Mm_k[m]):
+                M_updated[m][k + 1] += moved_out
+            elif k == 0 and m > 0 and len(Mm_k[m - 1]) > 0:
+                M_updated[m - 1][k] += moved_out
+
+    return M_updated
+
+
 # DNN Optimization Runner. Executes the DNN Partition function for a set number of iterations
-def dnn_per_slot(inputs: dict, iterations=3, save_csv=False):
+def dnn_per_slot(inputs: dict, iterations=3, save_csv=False, mobility_ratio=0.2):
     time_slot = inputs["Dmax"]
     
     for t in range(iterations):
         current_time = round(t * time_slot, 3)
         print(f"\n===== Time Slot {t + 1} | Time: {current_time:.3f}s =====")
 
+        # Update vehicle counts using the mobility model.
+
+        inputs["Mm_k"] = apply_vm(inputs["Mm_k"], mobility_ratio)
+        
         results = dnn_partition(
             inputs["Mm_k"], inputs["Sm_k"], inputs["d_mk"], inputs["FRm"],
             inputs["vehicle_compute_load"], inputs["rsu_compute_load"], inputs["Dmax"],
