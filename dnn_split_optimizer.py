@@ -1,4 +1,5 @@
 from dnn_split_singleframe import dnn_partition
+from copy import deepcopy
 import pandas as pd
 
 # INPUTS
@@ -55,20 +56,34 @@ def get_inputs():
 # Vehicle Mobility helper function – applies mobility to update vehicle counts per zone in each RSU.
 def apply_vm(Mm_k, mobility_ratio=0.2):
     """
-    Updates vehicle counts due to zone-to-zone and RSU-to-RSU mobility
+    Updates vehicle counts due to zone-to-zone and RSU-to-RSU mobility.
     """
+    Mm_k = deepcopy(Mm_k)
     M_updated = [zone_counts[:] for zone_counts in Mm_k]  
     
     for m in range(len(Mm_k)):
         for k in range(len(Mm_k[m])):
-            moved_out = int(Mm_k[m][k] * mobility_ratio)
+            vehicle_count = Mm_k[m][k]
+            if vehicle_count <= 0:
+                continue
+
+            moved_out = max(1, int(vehicle_count * mobility_ratio)) if vehicle_count > 0 else 0
             M_updated[m][k] -= moved_out
 
             # Vehicles move to next zone or previous RSU
+            # Attempt to move to next zone
             if k + 1 < len(Mm_k[m]):
                 M_updated[m][k + 1] += moved_out
-            elif k == 0 and m > 0 and len(Mm_k[m - 1]) > 0:
+
+            # Otherwise, try the previous RSU's same zone
+            elif m > 0 and k < len(Mm_k[m - 1]):
                 M_updated[m - 1][k] += moved_out
+
+            # Fallback Logic
+            # Restores moved vehicles back to its original zone
+            else:
+                M_updated[m][k] += moved_out
+
 
     return M_updated
 
