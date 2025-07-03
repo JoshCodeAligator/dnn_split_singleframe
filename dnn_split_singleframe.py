@@ -17,6 +17,8 @@ def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load,
                 candidates = []
 
                 #Computing Alpha and Beta and Checking if it is within System Constraints
+                #Refer to revised document to make changes with calculations.
+                #Fix throughput calculation
                 for n in range(0, 7):
                     A = vehicle_compute_load[n] / Fv
                     B = (vehicle_count * rsu_compute_load[n]) / FRm[m]
@@ -26,6 +28,7 @@ def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load,
                     uplink_throughput = BR * math.log2(1 + snr)
                     C = (vehicle_count * Sm) / uplink_throughput
                     E = Dmax - A
+                    
                     if E <= 0:
                         continue
                     sqrt_BC = math.sqrt(B * C)
@@ -71,7 +74,7 @@ def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load,
         prob += lpSum(item['beta'] * var for _, _, item, var in variables) <= 1
 
         # Solve the problem
-        prob.solve(PULP_CBC_CMD(msg=0))
+        prob.solve(PULP_CBC_CMD())
 
         if LpStatus[prob.status] != "Optimal":
             print(f"Warning: Problem not solved optimally. Could not include all zones. Status = {LpStatus[prob.status]}\n")
@@ -84,8 +87,11 @@ def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load,
 
         return selected_items
 
-    #Step 3 - Optimizing and Finalizing Alpha and Beta values. 
+    # Step 3 - Optimizing and Finalizing Alpha and Beta values. 
     # The Lagrangian Method will be used on the selected set of dnn splits from Step 2.
+    # Refer to revised document to make changes with calculations.
+
+    #Make value clear that it is for vehicle count.
     def optimal_alpha_beta(best_selection):
         finalized = []
         
@@ -95,7 +101,9 @@ def dnn_partition(Mm_k, Sm_k, d_mk, FRm, vehicle_compute_load, rsu_compute_load,
             n = entry['dnn_split'] - 1  
             value = entry['value']
 
-            #Closed-Form Lagrangian Method Calculations
+            # Closed-Form Lagrangian Method Calculations
+            # Partial Derivatives, set it to zero
+            # Refer to Screenshots
             A = vehicle_compute_load[n] / Fv
             B = (value * rsu_compute_load[n]) / FRm[m]
             d = d_mk[m][k]

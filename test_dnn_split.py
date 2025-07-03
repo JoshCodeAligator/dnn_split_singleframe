@@ -5,6 +5,7 @@ import copy
 import pandas as pd
 
 # Unit Tests
+# Verify that individual functions behave as expected in isolation.
 def test_default_execution_structure():
     """Test that default inputs produce valid DataFrames with expected columns."""
     inputs = get_inputs()
@@ -90,6 +91,7 @@ def test_low_delay_forces_split_simplicity():
         assert df["total_delay"].max() <= 0.1, "Some zones violate delay constraint"
 
 # Integration Tests
+# Test interaction between multiple components/modules to verify they work together
 def test_optimizer_runs_multiple_iterations():
     """Run full optimizer for multiple time slots (integration test)."""
     inputs = get_inputs()
@@ -110,6 +112,7 @@ def test_full_mobility_impact():
     assert all(any(z > 0 for z in rsu) for rsu in moved), "Mobility should redistribute vehicles"
 
 # Edge Case and Stress Tests
+# Test unusual or extreme scenarios to ensure robustness
 def test_all_rsu_same_processing_capacity():
     """Identical RSU compute capacities should still produce valid results."""
     inputs = get_inputs()
