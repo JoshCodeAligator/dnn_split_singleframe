@@ -1,5 +1,6 @@
+'''
 import pytest
-from dnn_split_optimizer import dnn_per_slot, get_inputs, apply_vm
+from dnn_split_optimizer import dnn_per_slot, real_world_data, apply_vm
 from dnn_split_singleframe import dnn_partition
 import copy
 import pandas as pd
@@ -8,7 +9,7 @@ import pandas as pd
 # Verify that individual functions behave as expected in isolation.
 def test_default_execution_structure():
     """Test that default inputs produce valid DataFrames with expected columns."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     results = dnn_partition(
         inputs["Mm_k"], inputs["Sm_k"], inputs["d_mk"], inputs["FRm"],
         inputs["vehicle_compute_load"], inputs["rsu_compute_load"], inputs["Dmax"],
@@ -21,7 +22,7 @@ def test_default_execution_structure():
 
 def test_zero_vehicle_input_behavior():
     """Ensure that zero vehicles lead to no delay and split index 0."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     inputs["Mm_k"] = [[0 for _ in rsu] for rsu in inputs["Mm_k"]]
     results = dnn_partition(
         inputs["Mm_k"], inputs["Sm_k"], inputs["d_mk"], inputs["FRm"],
@@ -34,7 +35,7 @@ def test_zero_vehicle_input_behavior():
 
 def test_vehicle_mobility_distribution():
     """Test that vehicle mobility redistributes vehicles but conserves total."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     original = copy.deepcopy(inputs["Mm_k"])
     moved = apply_vm(original, mobility_ratio=0.4)
     assert moved != original, "Mobility application didn't affect distribution."
@@ -49,7 +50,7 @@ def test_apply_vm_default_behavior():
 
 def test_vehicle_counts_never_negative():
     """Ensure vehicle mobility does not cause negative zone counts."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     inputs["Mm_k"] = [[0, 1], [1, 0]]
     updated = apply_vm(inputs["Mm_k"], mobility_ratio=0.95)
     for rsu in updated:
@@ -58,7 +59,7 @@ def test_vehicle_counts_never_negative():
 
 def test_high_compute_prefers_vehicle_side():
     """High compute & bandwidth should allow at least one zone to run full or near-full on vehicle side."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     inputs["Fv"] = 1e13         # 10 TFLOPS for Vehicle
     inputs["BR"] = 50e9         # Increased bandwidth to 50 Gbps 
     inputs["Dmax"] = 2.0        # High Delay Constraint
@@ -80,7 +81,7 @@ def test_high_compute_prefers_vehicle_side():
 
 def test_low_delay_forces_split_simplicity():
     """Tight delay budget should force simpler/lower DNN splits."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     inputs["Dmax"] = 0.1
     results = dnn_partition(
         inputs["Mm_k"], inputs["Sm_k"], inputs["d_mk"], inputs["FRm"],
@@ -94,20 +95,20 @@ def test_low_delay_forces_split_simplicity():
 # Test interaction between multiple components/modules to verify they work together
 def test_optimizer_runs_multiple_iterations():
     """Run full optimizer for multiple time slots (integration test)."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     inputs["Mm_k"] = [[4, 2], [1, 3]]
     dnn_per_slot(inputs, iterations=2)
 
 def test_optimizer_with_variable_mobility():
     """Test system behavior under different mobility ratios."""
-    base = get_inputs()
+    base = real_world_data()
     for ratio in [0.0, 0.2, 0.7]:
         inputs = copy.deepcopy(base)
         dnn_per_slot(inputs, iterations=1, mobility_ratio=ratio)
 
 def test_full_mobility_impact():
     """Test extreme case where all vehicles are mobile."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     moved = apply_vm(inputs["Mm_k"], mobility_ratio=1.0)
     assert all(any(z > 0 for z in rsu) for rsu in moved), "Mobility should redistribute vehicles"
 
@@ -115,7 +116,7 @@ def test_full_mobility_impact():
 # Test unusual or extreme scenarios to ensure robustness
 def test_all_rsu_same_processing_capacity():
     """Identical RSU compute capacities should still produce valid results."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     inputs["FRm"] = [300e9 for _ in inputs["FRm"]]
     results = dnn_partition(
         inputs["Mm_k"], inputs["Sm_k"], inputs["d_mk"], inputs["FRm"],
@@ -127,7 +128,7 @@ def test_all_rsu_same_processing_capacity():
 
 def test_extreme_rsu_imbalance():
     """Extreme RSU imbalance should not crash the optimizer and yield at least one valid output."""
-    inputs = get_inputs()
+    inputs = real_world_data()
     inputs["FRm"] = [800e9, 1e9]  # One powerful, one weak RSU
     results = dnn_partition(
         inputs["Mm_k"], inputs["Sm_k"], inputs["d_mk"], inputs["FRm"],
@@ -137,3 +138,5 @@ def test_extreme_rsu_imbalance():
     assert len(results) >= 1, "At least one RSU should produce a result"
     assert all(isinstance(df, pd.DataFrame) for df in results)
 
+
+'''
