@@ -31,11 +31,13 @@ def get_inputs():
         "dm_k": [
             [5.5, 6.2, 5.8],        # RSU 1 zones
             [6.1, 5.9, 7.0, 6.8]    # RSU 2 zones
-        ]
+        ],
 
-        # average dm_k (5-10m)
         # Vehicle Count based on Mobility model (Mm_k) - (1-2)
-
+        "Mm_k": [
+            [2, 1, 2],              # RSU 1 zones
+            [2, 2, 1, 1]            # RSU 2 zones
+        ]
     }
 # OUTPUTS
 # ----------
