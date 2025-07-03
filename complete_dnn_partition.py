@@ -1,5 +1,6 @@
 from two_stage_algorithm import dnn_partition
 from copy import deepcopy
+import math
 import pandas as pd
 
 # UPDATED ALL INPUTS WITH REAL WORLD INFORMATION.
@@ -12,9 +13,7 @@ def real_world_data():
     Sm_k = [32.8e6, 16.4e6, 8.2e6, 4.1e6, 2.05e6, 2.05e6, 1.02e6] # (bytes). Real feature map data size per DNN layer (1-7) from YOLOv5x model.
     Dmax = 0.08
     
-    avg_speed = 27.78  # (m/s) - average vehicle speed for 1 vehicle on highway. 100 km/h. Unused value.
     rsu_coverage = 200 # RSU covers 200 meters (m).
-    
     # These are the initial vehicle counts at time slot 0.
     rsu_vehicle_counts = [
             [2, 1, 2],              # RSU 1 - 3 zones
@@ -46,44 +45,43 @@ def real_world_data():
         "Mm_k_t": rsu_vehicle_counts
     }
 
-# ASSUMPTION: Maximum of 1 vehicle may exit the RSU at a time. Computes Vehicles
 def compute_Mout(Mlocal, speeds, timeslot, zone_lengths):
     Mout = []
     for m in range(len(Mlocal)):
-        Mout_rsu = []
+        mout_rsu = []
         for k in range(len(Mlocal[m])):
-            local_count = Mlocal[m][k]
-            speed = speeds[m][k]
-            zone_length = zone_lengths[m]
-            
-            # Distance vehicles can travel in the slot
-            travel_dist = speed * timeslot
-            
-            # Fraction of vehicles in the exit region of the zone
-            exit_fraction = min(1.0, travel_dist / zone_length)
-            
-            # Number of vehicles exiting
-            exiting = int(exit_fraction * local_count)
-            Mout_rsu.append(min(exiting, local_count))
-        Mout.append(Mout_rsu)
+            cnt = Mlocal[m][k]
+            # how far into the zone they'll get this slot:
+            travel = speeds[m][k] * timeslot
+            frac_exit = travel / zone_lengths[m]
+            exiting = int(math.floor(frac_exit * cnt))
+            mout_rsu.append(exiting)
+        Mout.append(mout_rsu)
     return Mout
 
-
-# Updates per-zone vehicle count for current time slot (Dmax). - Vehicle Mobility Model
-# Mlocal = Mm,k,t, timeslot = Dmax. Based on vehicle speeds and avg vehicle distance to RSU.
 def apply_vm(Mlocal, speeds, timeslot, zone_lengths):
+    """
+    Applies the paper’s zone-transition model (Forward-only flow):
+    for k>0:  Mnew[m][k] = Mlocal[m][k] - Mout[m][k] + Mout[m][k-1]
+    for k=0:  Mnew[m][0] = Mlocal[m][0] - Mout[m][0] + Mout[m-1][-1]
+    """
+    # deep copy current vehicle counts
+    Mnew = deepcopy(Mlocal)
+    # computes vehicles exitng zone, entering the next one.
     Mout = compute_Mout(Mlocal, speeds, timeslot, zone_lengths)
-    M_updated = deepcopy(Mlocal)
-    
+
     for m in range(len(Mlocal)):
-        for k in range(len(Mlocal[m])):
-            M_updated[m][k] = Mlocal[m][k] - Mout[m][k]
+        K = len(Mlocal[m])
+        for k in range(K):
+            # removes vehicles that are leaving zone
+            Mnew[m][k] = Mlocal[m][k] - Mout[m][k]
+            # adds those that came from previous zone
             if k > 0:
-                M_updated[m][k] += Mout[m][k - 1]
+                Mnew[m][k] += Mout[m][k-1]
+            # if k = 1 (first zone), add incoming vehicles from the last zone of the previous RSU (if any)
             elif m > 0:
-                M_updated[m][k] += Mout[m - 1][-1]
-    
-    return M_updated
+                Mnew[m][0] += Mout[m-1][-1]
+    return Mnew
 
 # Executes DNN Split Partition function for the specified number of iterations. (default=3)
 # Each iteration runs for one time slot.
@@ -133,7 +131,7 @@ def dnn_per_slot(inputs: dict, iterations=3, save_csv=False):
             inputs["σ2"],
         )
 
-        # 6) Prints results for specified number of iterations
+        # 6) Outputs optiaml resource allocation values and max vehicle counts for specified # of iterations.
         for idx, df in enumerate(results, start=1):
             print(f"\n--- RSU {idx} ---")
             print(f"Total Vehicles: {df['value'].sum()}")
@@ -141,15 +139,7 @@ def dnn_per_slot(inputs: dict, iterations=3, save_csv=False):
             if save_csv:
                 df.to_csv(f"rsu_{idx}_slot_{cycle+1}.csv", index=False)
 
-        # ─── now print diagnostics underneath ───
-        print("\n--- Diagnostics ---")
-        for m_idx in range(len(dm_k_t)):
-            print(
-                f"RSU {m_idx+1}: distances = {dm_k_t[m_idx]}, "
-                f"post-mobility counts = {Mm_k_t[m_idx]}"
-            )
-
-# main function that runs DNN split partition function repeatedly
+# main function that runs DNN split partition algorithm repeatedly
 if __name__ == "__main__":
     inputs = real_world_data()
-    dnn_per_slot(inputs, iterations=5, save_csv=False)
+    dnn_per_slot(inputs, iterations=10, save_csv=False)
