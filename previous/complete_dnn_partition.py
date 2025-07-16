@@ -1,4 +1,4 @@
-from two_stage_algorithm import dnn_partition
+from previous.two_stage_algorithm import dnn_partition
 from copy import deepcopy
 import math
 import pandas as pd
@@ -45,43 +45,6 @@ def real_world_data():
         "Mm_k_t": rsu_vehicle_counts
     }
 
-def compute_Mout(Mlocal, speeds, timeslot, zone_lengths):
-    Mout = []
-    for m in range(len(Mlocal)):
-        mout_rsu = []
-        for k in range(len(Mlocal[m])):
-            cnt = Mlocal[m][k]
-            # how far into the zone they'll get this slot:
-            travel = speeds[m][k] * timeslot
-            frac_exit = travel / zone_lengths[m]
-            exiting = int(math.floor(frac_exit * cnt))
-            mout_rsu.append(exiting)
-        Mout.append(mout_rsu)
-    return Mout
-
-def apply_vm(Mlocal, speeds, timeslot, zone_lengths):
-    """
-    Applies the paper’s zone-transition model (Forward-only flow):
-    for k>0:  Mnew[m][k] = Mlocal[m][k] - Mout[m][k] + Mout[m][k-1]
-    for k=0:  Mnew[m][0] = Mlocal[m][0] - Mout[m][0] + Mout[m-1][-1]
-    """
-    # deep copy current vehicle counts
-    Mnew = deepcopy(Mlocal)
-    # computes vehicles exitng zone, entering the next one.
-    Mout = compute_Mout(Mlocal, speeds, timeslot, zone_lengths)
-
-    for m in range(len(Mlocal)):
-        K = len(Mlocal[m])
-        for k in range(K):
-            # removes vehicles that are leaving zone
-            Mnew[m][k] = Mlocal[m][k] - Mout[m][k]
-            # adds those that came from previous zone
-            if k > 0:
-                Mnew[m][k] += Mout[m][k-1]
-            # if k = 1 (first zone), add incoming vehicles from the last zone of the previous RSU (if any)
-            elif m > 0:
-                Mnew[m][0] += Mout[m-1][-1]
-    return Mnew
 
 # Executes DNN Split Partition function for the specified number of iterations. (default=3)
 # Each iteration runs for one time slot.
@@ -111,7 +74,6 @@ def dnn_per_slot(inputs: dict, iterations=3, save_csv=False):
         ]
 
         # 4) update vehicle counts via paper’s formula
-        Mm_k_t = apply_vm(Mm_k_t, speeds, timeslot, zone_lengths)
         inputs["Mm_k_t"] = Mm_k_t
 
         # 5) runs dnn partition using the updated distances and vehicle counts.
@@ -142,4 +104,4 @@ def dnn_per_slot(inputs: dict, iterations=3, save_csv=False):
 # main function that runs DNN split partition algorithm repeatedly
 if __name__ == "__main__":
     inputs = real_world_data()
-    dnn_per_slot(inputs, iterations=10, save_csv=False)
+    dnn_per_slot(inputs, iterations=3, save_csv=False)
