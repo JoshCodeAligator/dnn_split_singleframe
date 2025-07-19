@@ -24,8 +24,8 @@ def real_world_data():
     zone_lengths = [rsu_coverage / len(zones) for zones in rsu_vehicle_counts]
     
     return {
-        "Fv": 5e12,      # Compute Power for for all vehicles - 5 TFLOPS.
-        "FRm": 8.1e12,   # Compute Power for all RSUs (8.1 TFLOPS, e.g., Tesla T4 GPU)
+        "Fv": 200e9,      # Compute Power for for all vehicles - 5 TFLOPS.
+        "FRm": 1e12,   # Compute Power for all RSUs (8.1 TFLOPS, e.g., Tesla T4 GPU)
         "BR": 20e6,      # 20 MHz LTE uplink
         "Dmax": Dmax,    # 80 ms max delay. Value must be 100 milliseconds or less. Same as timeslot.
         "Pt_v": 0.2,     # 0.2 W = 23 dBm
